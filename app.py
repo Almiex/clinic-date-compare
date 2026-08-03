@@ -213,7 +213,7 @@ if uploaded_past is not None and uploaded_curr is not None:
         df_melted_patients = create_melted_df(past_grouped, curr_grouped, 'Дошло пациентов', 'Часы')
         df_melted_losses = create_melted_df(past_grouped, curr_grouped, 'Потери %', 'Проценты')
 
-        style_colors = {'Прошлый период (Было)': '#d4933d', 'Текущий период (Стало)': '#633dd4'}
+        style_colors = {'Прошлый период (Было)': '#d4933d', 'Текущий период (Стало)': '#3a1d91'}
         style_layout = dict(
             template="plotly_white", height=700,
             margin=dict(t=60, b=40, l=150, r=40),
