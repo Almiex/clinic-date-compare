@@ -213,53 +213,85 @@ if uploaded_past is not None and uploaded_curr is not None:
         df_melted_patients = create_melted_df(past_grouped, curr_grouped, 'Дошло пациентов', 'Часы')
         df_melted_losses = create_melted_df(past_grouped, curr_grouped, 'Потери %', 'Проценты')
 
-        style_colors = {'Прошлый период (Было)': '#d65189', 'Текущий период (Стало)': '#2858a6'}
+        style_colors = {'Прошлый период (Было)': '#D2D7DF', 'Текущий период (Стало)': '#E6007E'}
         style_layout = dict(
-            template="plotly_white", height=850,
-            margin=dict(t=60, b=40, l=150, r=40),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            template="plotly_white", height=900,
+            margin=dict(t=60, b=40, l=180, r=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=12)),
             yaxis={
                 'categoryorder': 'trace',
-                'gridcolor': '#F0F0F0',      # ← лёгкие горизонтальные линии-разделители
+                'tickfont': dict(size=13),      # ← крупнее подписи специализаций
+                'gridcolor': '#F0F0F0',
                 'gridwidth': 1
             },
-            bargap=0.30,        # ← больше воздуха между специализациями
-            bargroupgap=0.05    # ← минимальный зазор между "Было" и "Стало"
+            xaxis=dict(tickfont=dict(size=11)),
+            bargap=0.12,        # ← полосы толще, но отступы между специализациями остаются
+            bargroupgap=0.06    # ← воздух между "Было" и "Стало" внутри группы
         )
 
         # --- График 1 ---
         st.subheader("1. Сравнение выделенного времени по табелю (в часах)")
         p1 = px.bar(df_melted_tabel, x='Часы', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
         p1.update_layout(xaxis_title="Выделено часов по табелю", yaxis_title="Специализация", **style_layout)
-        p1.update_traces(hovertemplate="<b>%{y}</b><br>Табель: %{x:.1f} ч<extra></extra>", texttemplate="%{x:.1f} ч", textposition="outside")
+        p1.update_traces(
+            hovertemplate="<b>%{y}</b><br>Табель: %{x:.1f} ч<extra></extra>",
+            texttemplate="%{x:.1f} ч",
+            textposition="outside",
+            textfont=dict(size=11),  # ← крупнее цифры на полосах
+            marker=dict(line=dict(width=0))  # ← убираем тонкую обводку, которая "съедает" толщину
+        )
         st.plotly_chart(p1, use_container_width=True)
 
         # --- График 2 ---
         st.subheader("2. Сравнение объемов: Часы записи пациентов")
         p2 = px.bar(df_melted_zapisi, x='Часы', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
         p2.update_layout(xaxis_title="Часы записи пациентов", yaxis_title="Специализация", **style_layout)
-        p2.update_traces(hovertemplate="<b>%{y}</b><br>Занято записями: %{x:.1f} ч<extra></extra>", texttemplate="%{x:.1f} ч", textposition="outside")
+        p2.update_traces(
+            hovertemplate="<b>%{y}</b><br>Занято записями: %{x:.1f} ч<extra></extra>",
+            texttemplate="%{x:.1f} ч",
+            textposition="outside",
+            textfont=dict(size=11),
+            marker=dict(line=dict(width=0))
+        )
         st.plotly_chart(p2, use_container_width=True)
 
         # --- График 3 ---
         st.subheader("3. Сравнение заполненности расписания по периодам (Загрузка в %)")
         p3 = px.bar(df_melted_load, x='Проценты', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
         p3.update_layout(xaxis_title="Загрузка расписания (%)", yaxis_title="Специализация", **style_layout)
-        p3.update_traces(hovertemplate="<b>%{y}</b><br>Загрузка: %{x:.1f}%<extra></extra>", texttemplate="%{x:.1f}%", textposition="outside")
+        p3.update_traces(
+            hovertemplate="<b>%{y}</b><br>Загрузка: %{x:.1f}%<extra></extra>",
+            texttemplate="%{x:.1f}%",
+            textposition="outside",
+            textfont=dict(size=11),
+            marker=dict(line=dict(width=0))
+        )
         st.plotly_chart(p3, use_container_width=True)
 
         # --- График 4 ---
         st.subheader("4. Сравнение дошедших пациентов (в часах)")
         p4 = px.bar(df_melted_patients, x='Часы', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
         p4.update_layout(xaxis_title="Фактически осуществлено приемов", yaxis_title="Специализация", **style_layout)
-        p4.update_traces(hovertemplate="<b>%{y}</b><br>Дошло пациентов: %{x:.1f} ч<extra></extra>", texttemplate="%{x:.1f} ч", textposition="outside")
+        p4.update_traces(
+            hovertemplate="<b>%{y}</b><br>Дошло пациентов: %{x:.1f} ч<extra></extra>",
+            texttemplate="%{x:.1f} ч",
+            textposition="outside",
+            textfont=dict(size=11),
+            marker=dict(line=dict(width=0))
+        )
         st.plotly_chart(p4, use_container_width=True)
 
         # --- График 5 ---
         st.subheader("5. Сравнение потерь из-за неявок пациентов (Недошедшие в %)")
         p5 = px.bar(df_melted_losses, x='Проценты', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
         p5.update_layout(xaxis_title="Доля недошедших пациентов (%)", yaxis_title="Специализация", **style_layout)
-        p5.update_traces(hovertemplate="<b>%{y}</b><br>Потери: %{x:.1f}%<extra></extra>", texttemplate="%{x:.1f}%", textposition="outside")
+        p5.update_traces(
+            hovertemplate="<b>%{y}</b><br>Потери: %{x:.1f}%<extra></extra>",
+            texttemplate="%{x:.1f}%",
+            textposition="outside",
+            textfont=dict(size=11),
+            marker=dict(line=dict(width=0))
+        )
         st.plotly_chart(p5, use_container_width=True)
     
     except Exception as e:
