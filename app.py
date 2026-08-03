@@ -2,186 +2,260 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import timedelta
+import io
+import re
 
-# Настройка страницы дашборда (желательно в самом верху)
-st.set_page_config(page_title="Аналитический отчет клиники", layout="wide")
+# ==============================================================================
+# НАСТРОЙКА СТРАНИЦЫ
+# ==============================================================================
+st.set_page_config(page_title="Сравнение периодов клиники", layout="wide")
 
-# Кастомные стили для таблиц и блоков, которые были в твоем Colab
 st.markdown("""
     <style>
-    .report-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-family: sans-serif; }
-    .report-table th { background-color: #005F73; color: white; padding: 10px; text-align: left; }
-    .report-table td { padding: 8px; border-bottom: 1px solid #ddd; }
-    .clinic-header { background-color: #f8f9fa; border-left: 5px solid #005F73; padding: 15px; margin-bottom: 25px; }
-    .clinic-title { font-size: 24px; font-weight: bold; color: #2B2D42; }
-    .clinic-subtitle { font-size: 14px; color: #6C9D9D; }
+    .kpi-card-compare {
+        flex: 1; min-width: 140px; background: #FFFFFF; border-radius: 6px; padding: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-top: 1px solid #EAEAEA;
+        border-right: 1px solid #EAEAEA; border-bottom: 1px solid #EAEAEA;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🏥 Аналитическая панель клиники")
-st.write("Загрузите выгрузку из МИС в формате Excel для построения интерактивного отчета.")
+st.title("📊 Сравнение периодов: Загруженность докторов")
+st.write("Загрузите два Excel-файла для сравнения базового и текущего периодов.")
 
-# Шаг 1 & 2: Загрузка файла пользователем через интерфейс
-uploaded_file = st.file_uploader("Выберите Excel файл (.xlsx)", type=["xlsx"])
+col_upl1, col_upl2 = st.columns(2)
+with col_upl1:
+    uploaded_past = st.file_uploader("📥 Базовый (прошлый) период", type=["xlsx"], key="past")
+with col_upl2:
+    uploaded_curr = st.file_uploader("📥 Текущий (отчетный) период", type=["xlsx"], key="curr")
 
-if uploaded_file is not None:
+# ==============================================================================
+# ФУНКЦИЯ ОБРАБОТКИ
+# ==============================================================================
+def clean_and_prepare_period(uploaded_file):
+    file_bytes = uploaded_file.getvalue()
+    df_all = pd.read_excel(io.BytesIO(file_bytes), sheet_name=1, header=None)
+
+    # Извлечение дат
+    raw_header_text = " ".join(df_all.iloc[:5].astype(str).values.flatten())
+    found_dates = re.findall(r'\d{2}\.\d{2}\.\d{4}', raw_header_text)
+    dates_range = f"{found_dates[0]} - {found_dates[1]}" if len(found_dates) >= 2 else "Не определен"
+
+    # Поиск строки заголовков
+    header_row_index = None
+    for idx, row in df_all.iterrows():
+        row_vals = [str(v).lower() for v in row.values if pd.notna(v)]
+        if any('специализация' in s for s in row_vals):
+            header_row_index = idx
+            break
+
+    if header_row_index is None:
+        raise ValueError("Не удалось найти строку заголовков в файле.")
+
+    # Очистка
+    df_clean = df_all.iloc[header_row_index + 1:].copy()
+    df_clean.columns = df_all.iloc[header_row_index].astype(str).str.replace('~000', '', regex=False).str.strip()
+
+    for col in ['Табель', 'Занято записями', 'Дошло пациентов']:
+        if col in df_clean.columns:
+            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
+
+    return df_clean, dates_range
+
+# ==============================================================================
+# ОБРАБОТКА И ВИЗУАЛИЗАЦИЯ
+# ==============================================================================
+if uploaded_past is not None and uploaded_curr is not None:
     try:
-        # Чтение листов
-        df_clean = pd.read_excel(uploaded_file, sheet_name=0)
-        df_meta = pd.read_excel(uploaded_file, sheet_name=1)
-        
-        # Сбор метаданных
-        clinic_name = df_meta.iloc[0, 0] if not df_meta.empty else "ООО КЛИНИКА"
-        period_str = df_meta.iloc[0, 1] if not df_meta.empty else "Период не указан"
-        
-        # Шаг 3: Расчет метрик и группировка
-        # Предполагаем, что предобработка типов данных аналогична твоей
-        sp_report = df_clean.groupby('Специализация', as_index=False).agg({
-            'Табель': 'sum',
-            'Занято записями': 'sum',
-            'Дошло пациентов': 'sum'
-        })
-        
-        sp_report['Свободно'] = sp_report['Табель'] - sp_report['Занято записями']
-        sp_report['Потери'] = sp_report['Занято записями'] - sp_report['Дошло пациентов']
-        
-        sp_report['Загрузка %'] = np.where(sp_report['Табель'] > 0, (sp_report['Занято записями'] / sp_report['Табель']) * 100, np.nan)
-        sp_report['Явка %'] = np.where(sp_report['Занято записями'] > 0, (sp_report['Дошло пациентов'] / sp_report['Занято записями']) * 100, np.nan)
-        
-        # Округляем для красоты
-        sp_report = sp_report.round(1)
+        df_past, date_past_str = clean_and_prepare_period(uploaded_past)
+        df_curr, date_curr_str = clean_and_prepare_period(uploaded_curr)
 
-        # Вывод шапки клиники
+        # --- Агрегация ---
+        past_agg = df_past.groupby('Специализация')[['Табель', 'Занято записями', 'Дошло пациентов']].sum()
+        curr_agg = df_curr.groupby('Специализация')[['Табель', 'Занято записями', 'Дошло пациентов']].sum()
+
+        compare_df = curr_agg.merge(past_agg, on='Специализация', suffixes=('_Текущий', '_Прошлый'), how='outer').fillna(0)
+
+        compare_df['Загрузка %_Прошлый'] = (compare_df['Занято записями_Прошлый'] / compare_df['Табель_Прошлый'].clip(lower=1) * 100).round(1)
+        compare_df['Загрузка %_Текущий'] = (compare_df['Занято записями_Текущий'] / compare_df['Табель_Текущий'].clip(lower=1) * 100).round(1)
+
+        past_losses = compare_df['Занято записями_Прошлый'] - compare_df['Дошло пациентов_Прошлый']
+        curr_losses = compare_df['Занято записями_Текущий'] - compare_df['Дошло пациентов_Текущий']
+        compare_df['Неявки %_Прошлый'] = (past_losses / compare_df['Занято записями_Прошлый'].clip(lower=1) * 100).round(1)
+        compare_df['Неявки %_Текущий'] = (curr_losses / compare_df['Занято записями_Текущий'].clip(lower=1) * 100).round(1)
+
+        compare_df['Δ Загрузка % (п.п.)'] = (compare_df['Загрузка %_Текущий'] - compare_df['Загрузка %_Прошлый']).round(1)
+        compare_df['Δ Неявки % (п.п.)'] = (compare_df['Неявки %_Текущий'] - compare_df['Неявки %_Прошлый']).round(1)
+        compare_df['Δ Часы записи (ч)'] = (compare_df['Занято записями_Текущий'] - compare_df['Занято записями_Прошлый']).round(1)
+        compare_df['Δ Отработанные записи (пац)'] = (compare_df['Дошло пациентов_Текущий'] - compare_df['Дошло пациентов_Прошлый']).round(1)
+
+        final_view = compare_df[[
+            'Табель_Прошлый', 'Табель_Текущий',
+            'Загрузка %_Прошлый', 'Загрузка %_Текущий', 'Δ Загрузка % (п.п.)',
+            'Неявки %_Прошлый', 'Неявки %_Текущий', 'Δ Неявки % (п.п.)',
+            'Занято записями_Прошлый', 'Занято записями_Текущий', 'Δ Часы записи (ч)',
+            'Дошло пациентов_Прошлый', 'Дошло пациентов_Текущий', 'Δ Отработанные записи (пац)'
+        ]].sort_values('Δ Загрузка % (п.п.)', ascending=False)
+
+        # --- KPI расчеты ---
+        total_past_tabel = df_past['Табель'].sum()
+        total_curr_tabel = df_curr['Табель'].sum()
+        diff_tabel = total_curr_tabel - total_past_tabel
+
+        total_past_tab = df_past['Занято записями'].sum()
+        total_curr_tab = df_curr['Занято записями'].sum()
+        diff_tab = total_curr_tab - total_past_tab
+
+        total_past_idle = total_past_tabel - total_past_tab
+        total_curr_idle = total_curr_tabel - total_curr_tab
+        diff_idle = total_curr_idle - total_past_idle
+
+        total_past_ok = df_past['Дошло пациентов'].sum()
+        total_curr_ok = df_curr['Дошло пациентов'].sum()
+        diff_ok = total_curr_ok - total_past_ok
+
+        avg_past_load = (total_past_tab / total_past_tabel * 100) if total_past_tabel > 0 else 0
+        avg_curr_load = (total_curr_tab / total_curr_tabel * 100) if total_curr_tabel > 0 else 0
+        diff_load = avg_curr_load - avg_past_load
+
+        total_past_lost = total_past_tab - total_past_ok
+        total_curr_lost = total_curr_tab - total_curr_ok
+
+        avg_past_fail = (total_past_lost / total_past_tab * 100) if total_past_tab > 0 else 0
+        avg_curr_fail = (total_curr_lost / total_curr_tab * 100) if total_curr_tab > 0 else 0
+        diff_fail = avg_curr_fail - avg_past_fail
+
+        def get_badge(value, is_inverse=False):
+            if abs(value) < 0.05:
+                return f'<span style="color: #6C757D; font-weight: bold;">0.0</span>'
+            is_positive_change = value > 0
+            is_good = is_positive_change if not is_inverse else not is_positive_change
+            color = "#00A896" if is_good else "#D62828"
+            sign = "+" if is_positive_change else ""
+            arrow = "▲" if is_positive_change else "▼"
+            return f'<span style="color: {color}; font-weight: bold;">{arrow} {sign}{value:,.1f}</span>'
+
+        # --- Шапка ---
         st.markdown(f"""
-            <div class="clinic-header">
-                <div class="clinic-title">🏥 КЛИНИКА: {clinic_name}</div>
-                <div class="clinic-subtitle">📊 Аналитический отчет: Загруженность медицинских специализаций ({period_str})</div>
+        <div style="font-family: Arial, sans-serif; margin-bottom: 20px; padding: 10px 0; border-bottom: 2px solid #f0f2f5;">
+            <span style="font-size: 20px; font-weight: bold; color: #2D3748;">📊 ИТОГОВЫЙ БАЛАНС ЭФФЕКТИВНОСТИ</span>
+            <div style="font-size: 14px; color: #2D3748; margin-top: 8px;">
+                Сравнение периодов: <b>Было: {date_past_str}</b> vs <b>Стало: {date_curr_str}</b>
             </div>
+        </div>
         """, unsafe_allow_html=True)
 
-        # --- БЛОК ТАБЛИЦЫ ---
-        st.subheader("📋 Сводная таблица эффективности")
-        # Вместо сырого HTML выводим через нативный интерактивный dataframe Streamlit
-        st.dataframe(sp_report, use_container_width=True)
+        # --- KPI карточки ---
+        kpi_html = f"""
+        <div style="display: flex; gap: 10px; font-family: 'Segoe UI', sans-serif; margin-bottom: 25px; flex-wrap: wrap;">
+            <div class="kpi-card-compare" style="border-left: 5px solid #005F73;">
+                <div style="color: #8C757D; font-size: 11px; font-weight: 600; text-transform: uppercase;">Часов по табелю:</div>
+                <div style="font-size: 22px; font-weight: 700; color: #2B2D42; margin: 5px 0;">{total_curr_tabel:,.1f} ч</div>
+                <div style="font-size: 12px; color: #4A4A4A;">Было: {total_past_tabel:,.1f} ч {get_badge(diff_tabel)}</div>
+            </div>
+            <div class="kpi-card-compare" style="border-left: 5px solid #805F73;">
+                <div style="color: #8C757D; font-size: 11px; font-weight: 600; text-transform: uppercase;">Часов записи:</div>
+                <div style="font-size: 22px; font-weight: 700; color: #2B2D42; margin: 5px 0;">{total_curr_tab:,.1f} ч</div>
+                <div style="font-size: 12px; color: #4A4A4A;">Было: {total_past_tab:,.1f} ч {get_badge(diff_tab)}</div>
+            </div>
+            <div class="kpi-card-compare" style="border-left: 5px solid #E9C46A;">
+                <div style="color: #8C757D; font-size: 11px; font-weight: 600; text-transform: uppercase;">Незанятое время:</div>
+                <div style="font-size: 22px; font-weight: 700; color: #2B2D42; margin: 5px 0;">{total_curr_idle:,.1f} ч</div>
+                <div style="font-size: 12px; color: #4A4A4A;">Было: {total_past_idle:,.1f} ч {get_badge(diff_idle, is_inverse=True)}</div>
+            </div>
+            <div class="kpi-card-compare" style="border-left: 5px solid #F4A261;">
+                <div style="color: #8C757D; font-size: 11px; font-weight: 600; text-transform: uppercase;">Загрузка клиники:</div>
+                <div style="font-size: 22px; font-weight: 700; color: #2B2D42; margin: 5px 0;">{avg_curr_load:,.1f}%</div>
+                <div style="font-size: 12px; color: #4A4A4A;">Было: {avg_past_load:,.1f}% {get_badge(diff_load)}</div>
+            </div>
+            <div class="kpi-card-compare" style="border-left: 5px solid #439D8D;">
+                <div style="color: #8C757D; font-size: 11px; font-weight: 600; text-transform: uppercase;">Дошло пациентов:</div>
+                <div style="font-size: 22px; font-weight: 700; color: #2B2D42; margin: 5px 0;">{total_curr_ok:,.1f} ч</div>
+                <div style="font-size: 12px; color: #4A4A4A;">Было: {total_past_ok:,.1f} ч {get_badge(diff_ok)}</div>
+            </div>
+            <div class="kpi-card-compare" style="border-left: 5px solid #E76F51;">
+                <div style="color: #8C757D; font-size: 11px; font-weight: 600; text-transform: uppercase;">Доля неявок:</div>
+                <div style="font-size: 22px; font-weight: 700; color: #2B2D42; margin: 5px 0;">{avg_curr_fail:,.1f}%</div>
+                <div style="font-size: 12px; color: #4A4A4A;">Было: {avg_past_fail:,.1f}% {get_badge(diff_fail, is_inverse=True)}</div>
+            </div>
+        </div>
+        """
+        st.markdown(kpi_html, unsafe_allow_html=True)
 
-        # Палитра цветов для графиков
-        PINK, TEAL = '#fce3ef', '#005F73'
-        
-        # --- ГРАФИКИ (Отрисовка в Streamlit) ---
-        
-        # Пример для p1 (Динамика по дням)
-        st.subheader("1. Линейный график: Динамика использования времени")
-        # Здесь должен быть твой код p1 = px.line(...) из скринов 6-7
-        # Для демонстрации используем заглушку, замени на свой px.line, если настроен сбор по дням:
-        if 'Дата' in df_clean.columns:
-            df_daily = df_clean.groupby('Дата').sum().reset_index()
-            p1 = px.line(df_daily, x='Дата', y='Занято записями', title="Динамика записей по дням")
-            st.plotly_chart(p1, use_container_width=True)
+        # --- Сводная таблица ---
+        with st.expander("📋 Развернуть сводную таблицу сравнения", expanded=False):
+            st.dataframe(final_view.reset_index(), use_container_width=True)
 
-        # График 4: ТОП по загрузке
-        st.subheader("4. Горизонтальный Bar Chart (ТОП по Загрузке)")
-        df_p4 = sp_report.sort_values('Загрузка %', ascending=True).copy()
-        p4 = px.bar(
-            df_p4, x='Загрузка %', y='Специализация', orientation='h',
-            title="ТОП специализаций по Загрузке %", color='Загрузка %',
-            color_continuous_scale=[[0.0, '#fce3ef'], [1.0, '#6A323A']],
-            custom_data=['Табель', 'Занято записями']
+        # --- Подготовка графиков ---
+        past_grouped = df_past.groupby('Специализация', as_index=False)[['Табель', 'Занято записями', 'Дошло пациентов']].sum()
+        curr_grouped = df_curr.groupby('Специализация', as_index=False)[['Табель', 'Занято записями', 'Дошло пациентов']].sum()
+
+        past_grouped['Загрузка %'] = (past_grouped['Занято записями'] / past_grouped['Табель'] * 100).fillna(0).round(1)
+        past_grouped['Потери %'] = ((past_grouped['Занято записями'] - past_grouped['Дошло пациентов']) / past_grouped['Занято записями'] * 100).fillna(0).round(1)
+        curr_grouped['Загрузка %'] = (curr_grouped['Занято записями'] / curr_grouped['Табель'] * 100).fillna(0).round(1)
+        curr_grouped['Потери %'] = ((curr_grouped['Занято записями'] - curr_grouped['Дошло пациентов']) / curr_grouped['Занято записями'] * 100).fillna(0).round(1)
+
+        def create_melted_df(df_p, df_c, metric_col, value_name):
+            p_sub = df_p[['Специализация', metric_col]].rename(columns={metric_col: 'Прошлый период (Было)'})
+            c_sub = df_c[['Специализация', metric_col]].rename(columns={metric_col: 'Текущий период (Стало)'})
+            merged = pd.merge(p_sub, c_sub, on='Специализация', how='outer').fillna(0)
+            merged = merged.sort_values(by='Текущий период (Стало)', ascending=True)
+            return merged.melt(
+                id_vars='Специализация',
+                value_vars=['Прошлый период (Было)', 'Текущий период (Стало)'],
+                var_name='Период',
+                value_name=value_name
+            )
+
+        df_melted_tabel = create_melted_df(past_grouped, curr_grouped, 'Табель', 'Часы')
+        df_melted_zapisi = create_melted_df(past_grouped, curr_grouped, 'Занято записями', 'Часы')
+        df_melted_load = create_melted_df(past_grouped, curr_grouped, 'Загрузка %', 'Проценты')
+        df_melted_patients = create_melted_df(past_grouped, curr_grouped, 'Дошло пациентов', 'Часы')
+        df_melted_losses = create_melted_df(past_grouped, curr_grouped, 'Потери %', 'Проценты')
+
+        style_colors = {'Прошлый период (Было)': '#6A323A', 'Текущий период (Стало)': '#6C9D9D'}
+        style_layout = dict(
+            template="plotly_white", height=650,
+            margin=dict(t=60, b=40, l=150, r=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            yaxis={'categoryorder': 'trace'}
         )
-        p4.update_layout(xaxis_title="Загрузка расписания (%)", coloraxis_colorbar=dict(title="% загрузки"))
-        p4.update_traces(hover_template="<b>%{y}</b><br>Загрузка: %{x:.1f}%<br>Выделено часов: %{customdata[0]:.1f} ч.<br>Занято записью: %{customdata[1]:.1f} ч.<extra></extra>")
+
+        # --- График 1 ---
+        st.subheader("1. Сравнение выделенного времени по табелю (в часах)")
+        p1 = px.bar(df_melted_tabel, x='Часы', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
+        p1.update_layout(xaxis_title="Выделено часов по табелю", yaxis_title="Специализация", **style_layout)
+        p1.update_traces(hovertemplate="<b>%{y}</b><br>Табель: %{x:.1f} ч<extra></extra>", texttemplate="%{x:.1f} ч", textposition="outside")
+        st.plotly_chart(p1, use_container_width=True)
+
+        # --- График 2 ---
+        st.subheader("2. Сравнение объемов: Часы записи пациентов")
+        p2 = px.bar(df_melted_zapisi, x='Часы', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
+        p2.update_layout(xaxis_title="Часы записи пациентов", yaxis_title="Специализация", **style_layout)
+        p2.update_traces(hovertemplate="<b>%{y}</b><br>Занято записями: %{x:.1f} ч<extra></extra>", texttemplate="%{x:.1f} ч", textposition="outside")
+        st.plotly_chart(p2, use_container_width=True)
+
+        # --- График 3 ---
+        st.subheader("3. Сравнение заполненности расписания по периодам (Загрузка в %)")
+        p3 = px.bar(df_melted_load, x='Проценты', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
+        p3.update_layout(xaxis_title="Загрузка расписания (%)", yaxis_title="Специализация", **style_layout)
+        p3.update_traces(hovertemplate="<b>%{y}</b><br>Загрузка: %{x:.1f}%<extra></extra>", texttemplate="%{x:.1f}%", textposition="outside")
+        st.plotly_chart(p3, use_container_width=True)
+
+        # --- График 4 ---
+        st.subheader("4. Сравнение дошедших пациентов (в часах)")
+        p4 = px.bar(df_melted_patients, x='Часы', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
+        p4.update_layout(xaxis_title="Фактически осуществлено приемов", yaxis_title="Специализация", **style_layout)
+        p4.update_traces(hovertemplate="<b>%{y}</b><br>Дошло пациентов: %{x:.1f} ч<extra></extra>", texttemplate="%{x:.1f} ч", textposition="outside")
         st.plotly_chart(p4, use_container_width=True)
 
-        # График 5.1 & 5.2: Неявки
-        st.subheader("5. Анализ неявок пациентов")
-        col1, col2 = st.columns(2) # Делим экран на две колонки
-        
-        with col1:
-            df_p51 = sp_report.sort_values('Потери', ascending=True).copy()
-            p51 = px.bar(df_p51, x='Потери', y='Специализация', orientation='h', title="5.1. ТОП по Неявкам (часов)", color='Потери', color_continuous_scale=[[0.0, '#e6fcfb'], [1.0, '#005F73']])
-            st.plotly_chart(p51, use_container_width=True)
-            
-        with col2:
-            sp_report['Неявки %'] = (sp_report['Потери'] / sp_report['Занято записями'].clip(lower=1) * 100).round(1).fillna(0)
-            df_p52 = sp_report.sort_values('Неявки %', ascending=True).copy()
-            p52 = px.bar(df_p52, x='Неявки %', y='Специализация', orientation='h', title="5.2. ТОП по Неявкам (%)", color='Неявки %', color_continuous_scale=[[0.0, '#fce3ef'], [1.0, '#6A323A']])
-            st.plotly_chart(p52, use_container_width=True)
+        # --- График 5 ---
+        st.subheader("5. Сравнение потерь из-за неявок пациентов (Недошедшие в %)")
+        p5 = px.bar(df_melted_losses, x='Проценты', y='Специализация', color='Период', barmode='group', orientation='h', color_discrete_map=style_colors)
+        p5.update_layout(xaxis_title="Доля недошедших пациентов (%)", yaxis_title="Специализация", **style_layout)
+        p5.update_traces(hovertemplate="<b>%{y}</b><br>Потери: %{x:.1f}%<extra></extra>", texttemplate="%{x:.1f}%", textposition="outside")
+        st.plotly_chart(p5, use_container_width=True)
 
-        # График 6: Плиточная диаграмма (Treemap)
-        st.subheader("6. Плиточная диаграмма: Объемы и явка")
-        sp_report['Загрузка %'] = sp_report['Загрузка %'].fillna(0)
-        sp_report['Явка %'] = sp_report['Явка %'].fillna(0)
-        p6 = px.treemap(
-            sp_report, path=['Специализация'], values='Табель', color='Явка %',
-            color_continuous_scale=[[0.0, '#005F73'], [1.0, '#E0FFFF']],
-            title="Объем выделенного времени и процент явки пациентов",
-            custom_data=['Загрузка %', 'Явка %']
-        )
-        p6.update_traces(texttemplate="<b>%{label}</b><br>Выделено часов: %{value:.1f} ч.<br>Загрузка: %{customdata[0]:.1f}%<br>Явка: %{customdata[1]:.1f}%")
-        st.plotly_chart(p6, use_container_width=True)
-
-        # График 7: Матрица эффективности (Пузырьковая)
-        st.subheader("7. Матрица эффективности: Загрузка и неявки")
-        p7 = px.scatter(
-            sp_report, x='Табель', y='Загрузка %', size='Табель', color='Неявки %',
-            hover_name='Специализация', text='Специализация',
-            title="Анализ загрузки и неявок по направлениям",
-            color_continuous_scale=[[0.0, '#00A896'], [0.5, '#F4A261'], [1.0, '#D62828']]
-        )
-        p7.update_layout(template="plotly_white", xaxis_title="Выделено часов (ч.)", yaxis_title="Загрузка расписания (%)")
-        st.plotly_chart(p7, use_container_width=True)
-
-        # График 8: Каскадная диаграмма (Waterfall Balance)
-        st.subheader("8. Каскадная диаграмма: Баланс рабочего времени")
-        total_hours = sp_report['Табель'].sum()
-        free_hours = sp_report['Свободно'].sum()
-        lost_hours = sp_report['Потери'].sum()
-        active_hours = sp_report['Дошло пациентов'].sum()
-        
-        p8 = go.Figure(go.Bar(
-            x=["1. План по табелю", "Время без записи", "Неявки пациентов", "Фактически занято"],
-            y=[total_hours, free_hours, lost_hours, active_hours],
-            base=[0, total_hours - free_hours, total_hours - free_hours - lost_hours, 0],
-            marker_color=['#005F73', '#B5838D', '#B5838D', '#6C9D9D']
-        ))
-        p8.update_layout(template="plotly_white", title="Баланс рабочего времени и структура потерь")
-        st.plotly_chart(p8, use_container_width=True)
-
-        # График 9: Кольцевая структура (Donut)
-        st.subheader("9. Структура использования времени")
-        p9 = go.Figure(data=[go.Pie(
-            labels=['Фактически занято', 'Время без записи', 'Неявки пациентов'],
-            values=[active_hours, free_hours, lost_hours],
-            hole=.4, marker=dict(colors=['#6C9D9D', '#d1fff4', '#B5838D'])
-        )])
-        p9.update_layout(title="Структура использования рабочего времени докторов")
-        st.plotly_chart(p9, use_container_width=True)
-
-        # --- ТЕПЛОВЫЕ КАРТЫ за последние 14 дней (Графики 10 и 11) ---
-        st.subheader("📅 Тепловые карты расписания (последние 14 дней)")
-        
-        # Повторяем логику фильтрации дат из скрина 14-16
-        df_local = df_clean.copy()
-        df_local["Parsed_Date"] = pd.to_datetime(df_local["Дата"], dayfirst=True, errors="coerce")
-        df_local = df_local.dropna(subset=["Parsed_Date"])
-        
-        for col in ["Табель", "Занято записями", "Дошло пациентов"]:
-            df_local[col] = pd.to_numeric(df_local[col].astype(str).str.replace(",", "."), errors="coerce")
-            
-        if not df_local.empty:
-            last_date = df_local["Parsed_Date"].max()
-            start_date = last_date - timedelta(days=13)
-            df_local = df_local[(df_local["Parsed_Date"] >= start_date) & (df_local["Parsed_Date"] <= last_date)].copy()
-            df_local["Дата"] = df_local["Parsed_Date"].dt.strftime("%d.%m.%Y")
-            ordered_dates = [d.strftime("%d.%m.%Y") for d in pd.date_range(start=start_date, end=last_date, freq="D")]
-            
-            agg = df_local.groupby(["Дата", "Специализация"], as_index=False).agg({
-                "Табель": "sum", "Занято записями": "sum", "Дошло пациентов": "sum"
-            })
-            
-            agg["Загрузка %"] = np.where(agg["Табель"] > 0, (agg["Занято записями"] / agg["Табель"]) * 100, np.nan)
-            h10 = agg.pivot(index="Дата", columns="Специализация", values="Загрузка %").reindex(ordered_dates)
-            
-            # Отрисовка Тепловой карты 10
-            p10 = go.Figure(data=go.Heatmap(
+    except Exception as e:
+        st.error(f"❌ Ошибка при обработке файлов: {e}")
+        st.exception(e)
