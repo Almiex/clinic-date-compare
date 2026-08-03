@@ -36,8 +36,8 @@ def clean_and_prepare_period(uploaded_file):
     file_bytes = uploaded_file.getvalue()
     df_all = pd.read_excel(io.BytesIO(file_bytes), sheet_name=1, header=None)
 
-    # Извлечение дат
-    raw_header_text = " ".join(df_all.iloc[:5].astype(str).values.flatten())
+    # Извлечение дат — гарантированно преобразуем каждую ячейку в строку
+    raw_header_text = " ".join(str(v) for v in df_all.iloc[:5].values.flatten() if pd.notna(v))
     found_dates = re.findall(r'\d{2}\.\d{2}\.\d{4}', raw_header_text)
     dates_range = f"{found_dates[0]} - {found_dates[1]}" if len(found_dates) >= 2 else "Не определен"
 
