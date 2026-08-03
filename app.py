@@ -213,14 +213,14 @@ if uploaded_past is not None and uploaded_curr is not None:
         df_melted_patients = create_melted_df(past_grouped, curr_grouped, 'Дошло пациентов', 'Часы')
         df_melted_losses = create_melted_df(past_grouped, curr_grouped, 'Потери %', 'Проценты')
 
-        style_colors = {'Прошлый период (Было)': '#d4933d', 'Текущий период (Стало)': '#3a1d91'}
+        style_colors = {'Прошлый период (Было)': '#edd537', 'Текущий период (Стало)': '#3a1d91'}
         style_layout = dict(
             template="plotly_white", height=700,
             margin=dict(t=60, b=40, l=150, r=40),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             yaxis={'categoryorder': 'trace'},
-            bargap=0.12,        # ← меньше = полосы толще
-            bargroupgap=0.03    # ← меньше = столбики внутри группы толще
+            bargap=0.2,        # ← меньше = полосы толще
+            bargroupgap=0.5    # ← меньше = столбики внутри группы толще
         )
 
         # --- График 1 ---
