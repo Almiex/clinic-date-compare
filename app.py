@@ -219,8 +219,8 @@ if uploaded_past is not None and uploaded_curr is not None:
             margin=dict(t=60, b=40, l=150, r=40),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             yaxis={'categoryorder': 'trace'},
-            bargap=0.2,        # ← меньше = полосы толще
-            bargroupgap=0.5    # ← меньше = столбики внутри группы толще
+            bargap=0.05,        # ← меньше = полосы толще
+            bargroupgap=0.01    # ← меньше = столбики внутри группы толще
         )
 
         # --- График 1 ---
