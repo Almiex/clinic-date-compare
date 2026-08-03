@@ -213,14 +213,18 @@ if uploaded_past is not None and uploaded_curr is not None:
         df_melted_patients = create_melted_df(past_grouped, curr_grouped, 'Дошло пациентов', 'Часы')
         df_melted_losses = create_melted_df(past_grouped, curr_grouped, 'Потери %', 'Проценты')
 
-        style_colors = {'Прошлый период (Было)': '#e8b833', 'Текущий период (Стало)': '#3a1d91'}
+        style_colors = {'Прошлый период (Было)': '#e6a8b4', 'Текущий период (Стало)': '#9cc0f0'}
         style_layout = dict(
-            template="plotly_white", height=700,
+            template="plotly_white", height=850,
             margin=dict(t=60, b=40, l=150, r=40),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            yaxis={'categoryorder': 'trace'},
-            bargap=0.025,        # ← меньше = полосы толще
-            bargroupgap=0.005    # ← меньше = столбики внутри группы толще
+            yaxis={
+                'categoryorder': 'trace',
+                'gridcolor': '#F0F0F0',      # ← лёгкие горизонтальные линии-разделители
+                'gridwidth': 1
+            },
+            bargap=0.30,        # ← больше воздуха между специализациями
+            bargroupgap=0.05    # ← минимальный зазор между "Было" и "Стало"
         )
 
         # --- График 1 ---
@@ -257,7 +261,6 @@ if uploaded_past is not None and uploaded_curr is not None:
         p5.update_layout(xaxis_title="Доля недошедших пациентов (%)", yaxis_title="Специализация", **style_layout)
         p5.update_traces(hovertemplate="<b>%{y}</b><br>Потери: %{x:.1f}%<extra></extra>", texttemplate="%{x:.1f}%", textposition="outside")
         st.plotly_chart(p5, use_container_width=True)
-
     
     except Exception as e:
         st.error(f"❌ Ошибка при обработке файлов: {e}")
